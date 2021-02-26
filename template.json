@@ -1,0 +1,108 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Working with custom resources and S3",
+  "Parameters": {
+    "S3BucketName": {
+      "Type": "String",
+      "Description": "S3 bucket to create.",
+      "AllowedPattern": "[a-zA-Z][a-zA-Z0-9_-]*"
+    },
+    "DirsToCreate": {
+      "Description": "Comma delimited list of directories to create.",
+      "Type": "CommaDelimitedList"
+    }
+  },
+  "Resources": {
+    "SampleS3Bucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": {"Ref":"S3BucketName"}
+      }
+    },
+    "S3CustomResource": {
+      "Type": "Custom::S3CustomResource",
+      "DependsOn":"AWSLambdaExecutionRole",
+      "Properties": {
+        "ServiceToken": {"Fn::GetAtt": ["AWSLambdaFunction","Arn"]},
+        "the_bucket": {"Ref":"SampleS3Bucket"},
+        "dirs_to_create": {"Ref":"DirsToCreate"}
+      }
+    },
+    "AWSLambdaFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Description": "Work with S3 Buckets!",
+        "FunctionName": {"Fn::Sub":"${AWS::StackName}-${AWS::Region}-lambda"},
+        "Handler": "index.handler",
+        "Role": {"Fn::GetAtt": ["AWSLambdaExecutionRole","Arn"]},
+        "Timeout": 360,
+        "Runtime": "python3.6",
+        "Code": {
+          "ZipFile": "import boto3\r\nimport cfnresponse\r\ndef handler(event, context):\r\n    # Init ...\r\n    the_event = event['RequestType']\r\n    print(\"The event is: \", str(the_event))\r\n    response_data = {}\r\n    s_3 = boto3.client('s3')\r\n    # Retrieve parameters\r\n    the_bucket = event['ResourceProperties']['the_bucket']\r\n    dirs_to_create = event['ResourceProperties']['dirs_to_create']\r\n    try:\r\n        if the_event in ('Create', 'Update'):\r\n            print(\"Requested folders: \", str(dirs_to_create))\r\n            for dir_name in dirs_to_create:\r\n                print(\"Creating: \", str(dir_name))\r\n                s_3.put_object(Bucket=the_bucket,\r\n                                Key=(dir_name\r\n                                    + '\/'))\r\n        elif the_event == 'Delete':\r\n            print(\"Deleting S3 content...\")\r\n            b_operator = boto3.resource('s3')\r\n            b_operator.Bucket(str(the_bucket)).objects.all().delete()\r\n        # Everything OK... send the signal back\r\n        print(\"Execution succesfull!\")\r\n        cfnresponse.send(event,\r\n                        context,\r\n                        cfnresponse.SUCCESS,\r\n                        response_data)\r\n    except Exception as e:\r\n        print(\"Execution failed...\")\r\n        print(str(e))\r\n        response_data['Data'] = str(e)\r\n        cfnresponse.send(event,\r\n                        context,\r\n                        cfnresponse.FAILED,\r\n                        response_data)"
+        }
+      }
+    },
+    "AWSLambdaExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "arn:aws:logs:*:*:*"
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": {"Fn::Sub": "${AWS::StackName}-${AWS::Region}-AWSLambda-CW"}
+          },
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:List*"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${SampleS3Bucket}/*"},
+                    {"Fn::Sub": "arn:aws:s3:::${SampleS3Bucket}"}
+                  ]
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": {"Fn::Sub":"${AWS::StackName}-${AWS::Region}-AWSLambda-S3"}
+          }
+        ],
+        "RoleName": {"Fn::Sub":"${AWS::StackName}-${AWS::Region}-AWSLambdaExecutionRole"}
+      }
+    }
+  }
+}
